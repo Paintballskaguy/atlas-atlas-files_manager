@@ -1,7 +1,9 @@
 import redisClient from './utils/redis.js';
 
 (async () => {
-  console.log('Is Redis alive?', redisClient.isAlive()); // Should print true
+  await redisClient.ready; // ✅ Wait until Redis is connected
+
+  console.log('Is Redis alive?', redisClient.isAlive()); // ✅ Should now print true
 
   console.log('Initial get for myKey:', await redisClient.get('myKey')); // Should print null
 
