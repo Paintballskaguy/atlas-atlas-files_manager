@@ -1,83 +1,91 @@
-import fs from 'fs';
-import path from 'path';
-import { v4 as uuidv4 } from 'uuid';
+import { ObjectId } from 'mongodb';
 import redisClient from '../utils/redis.js';
 import dbClient from '../utils/db.js';
 
 class FilesController {
-  static async postUpload(req, res) {
-    // 1. Authenticate user by token
-    const token = req.header('X-Token');
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
-
-    const userId = await redisClient.get(`auth_${token}`);
-    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-
-    const { name, type, parentId = '0', isPublic = false, data } = req.body || {};
-
-    // 2. Validate inputs
-    if (!name) return res.status(400).json({ error: 'Missing name' });
-
-    const validTypes = ['folder', 'file', 'image'];
-    if (!type || !validTypes.includes(type)) return res.status(400).json({ error: 'Missing type' });
-
-    if (type !== 'folder' && !data) return res.status(400).json({ error: 'Missing data' });
-
-    // 3. Check parent folder validity if parentId != 0
-    if (parentId !== '0') {
-      const parentFile = await dbClient.db.collection('files').findOne({ _id: new dbClient.ObjectId(parentId) });
-      if (!parentFile) return res.status(400).json({ error: 'Parent not found' });
-      if (parentFile.type !== 'folder') return res.status(400).json({ error: 'Parent is not a folder' });
-    }
-
-    // 4. Prepare the new file object for DB insertion
-    const newFile = {
-      userId: new dbClient.ObjectId(userId),
-      name,
-      type,
-      isPublic,
-      parentId,
-    };
-
-    // 5. If folder, just insert and return
-    if (type === 'folder') {
-      const result = await dbClient.db.collection('files').insertOne(newFile);
-      return res.status(201).json({ id: result.insertedId, ...newFile });
-    }
-
-    // 6. For files and images, store on disk first
-    // Determine storage folder path
-    let storageFolder = process.env.FOLDER_PATH;
-    if (!storageFolder) {
-      storageFolder = '/tmp/files_manager';
-    }
-
-    // Ensure folder exists
-    if (!fs.existsSync(storageFolder)) {
-      fs.mkdirSync(storageFolder, { recursive: true });
-    }
-
-    // Create a unique filename
-    const filename = uuidv4();
-    const filePath = path.join(storageFolder, filename);
-
-    // Write the decoded base64 file content to disk
-    const buffer = Buffer.from(data, 'base64');
+  static async getShow(req, res) {
     try {
-      fs.writeFileSync(filePath, buffer);
-    } catch (err) {
-      console.error('Failed to write file:', err);
-      return res.status(500).json({ error: 'Failed to save file' });
+      const token = req.header('X-Token');
+      if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+      // Get userId from Redis token
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+      const fileId = req.params.id;
+      if (!ObjectId.isValid(fileId)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      // Find file by id and userId
+      const file = await dbClient.db.collection('files').findOne({
+        _id: new ObjectId(fileId),
+        userId: new ObjectId(userId),
+      });
+
+      if (!file) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+
+      // Format response to include id string instead of _id
+      return res.json({
+        id: file._id.toString(),
+        userId: file.userId.toString(),
+        name: file.name,
+        type: file.type,
+        isPublic: file.isPublic || false,
+        parentId: file.parentId,
+        localPath: file.localPath,
+      });
+    } catch (error) {
+      console.error('FilesController.getShow error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
     }
+  }
 
-    // Add localPath to DB record
-    newFile.localPath = filePath;
+  static async getIndex(req, res) {
+    try {
+      const token = req.header('X-Token');
+      if (!token) return res.status(401).json({ error: 'Unauthorized' });
 
-    // 7. Insert file metadata in DB
-    const result = await dbClient.db.collection('files').insertOne(newFile);
+      // Get userId from Redis token
+      const userId = await redisClient.get(`auth_${token}`);
+      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-    // 8. Return new file info (id and properties)
-    return res.status(201).json({ id: result.insertedId, ...newFile });
+      // Query parameters
+      const parentId = req.query.parentId || '0';
+      const page = parseInt(req.query.page, 10) || 0;
+      const limit = 20;
+
+      // Build MongoDB query filter
+      const filter = {
+        userId: new ObjectId(userId),
+        parentId: parentId === '0' ? '0' : parentId,
+      };
+
+      // Use aggregation with skip and limit for pagination
+      const files = await dbClient.db.collection('files')
+        .find(filter)
+        .skip(page * limit)
+        .limit(limit)
+        .toArray();
+
+      // Format files (replace _id and userId ObjectId with strings)
+      const formattedFiles = files.map(file => ({
+        id: file._id.toString(),
+        userId: file.userId.toString(),
+        name: file.name,
+        type: file.type,
+        isPublic: file.isPublic || false,
+        parentId: file.parentId,
+        localPath: file.localPath,
+      }));
+
+      return res.json(formattedFiles);
+    } catch (error) {
+      console.error('FilesController.getIndex error:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
   }
 }
 
