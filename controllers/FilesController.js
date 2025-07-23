@@ -5,8 +5,13 @@ import redisClient from '../utils/redis.js';
 import dbClient from '../utils/db.js';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
+import fileQueue from '../utils/queue.js'; // Use direct import
 
 const { ObjectId } = pkg;
+
+
+
+
 class FilesController {
   static async postUpload(req, res) {
     try {
@@ -58,7 +63,7 @@ class FilesController {
         
         const result = await dbClient.db.collection('files').insertOne(newFolder);
         return res.status(201).json({
-          id: result.insertedId,
+          id: result.insertedId.toString(),
           userId,
           name,
           type,
@@ -85,8 +90,17 @@ class FilesController {
       };
 
       const result = await dbClient.db.collection('files').insertOne(newFile);
+      
+      // Add to queue only for images
+      if (type === 'image' && fileQueue) {
+        fileQueue.add({
+          userId: userId,
+          fileId: result.insertedId.toString(),
+        });
+      }
+
       return res.status(201).json({
-        id: result.insertedId,
+        id: result.insertedId.toString(),
         userId,
         name,
         type,
@@ -268,9 +282,17 @@ class FilesController {
         return res.status(404).json({ error: 'Not found' });
       }
 
+      // Handle size parameter
+      let filePath = file.localPath;
+      const { size } = req.query;
+      
+      if (size && ['500', '250', '100'].includes(size)) {
+        filePath = `${file.localPath}_${size}`;
+      }
+
       // Check if file exists locally
       try {
-        await fs.access(file.localPath);
+        await fs.access(filePath);
       } catch (err) {
         return res.status(404).json({ error: 'Not found' });
       }
@@ -279,7 +301,7 @@ class FilesController {
       const mimeType = mime.lookup(file.name) || 'text/plain';
 
       // Read and return file content
-      const data = await fs.readFile(file.localPath);
+      const data = await fs.readFile(filePath);
       res.set('Content-Type', mimeType);
       return res.send(data);
     } catch (error) {
@@ -287,57 +309,6 @@ class FilesController {
       return res.status(500).json({ error: 'Internal server error' });
     }
   }
-  static async getFile(req, res) {
-  try {
-    const fileId = req.params.id;
-    
-    // Validate file ID format
-    if (!ObjectId.isValid(fileId)) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-
-    // Find file by ID
-    const file = await dbClient.db.collection('files').findOne({
-      _id: new ObjectId(fileId),
-    });
-
-    // File not found
-    if (!file) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-
-    // Handle folders
-    if (file.type === 'folder') {
-      return res.status(400).json({ error: "A folder doesn't have content" });
-    }
-
-    // Check file access permissions
-    const token = req.header('X-Token');
-    const userId = token ? await redisClient.get(`auth_${token}`) : null;
-    
-    if (!file.isPublic && (!userId || userId !== file.userId.toString())) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-
-    // Check if file exists locally
-    try {
-      await fs.access(file.localPath);
-    } catch (err) {
-      return res.status(404).json({ error: 'Not found' });
-    }
-
-    // Determine MIME type
-    const mimeType = mime.lookup(file.name) || 'text/plain';
-
-    // Read and return file content
-    const data = await fs.readFile(file.localPath);
-    res.set('Content-Type', mimeType);
-    return res.send(data);
-  } catch (error) {
-    console.error('FilesController.getFile error:', error);
-    return res.status(500).json({ error: 'Internal server error' });
-  }
-}
 }
 
 export default FilesController;

@@ -2,7 +2,14 @@ import { createClient } from 'redis';
 
 class RedisClient {
   constructor() {
-    this.client = createClient();
+    const host = process.env.REDIS_HOST || '127.0.0.1'; // Use IPv4
+    const port = process.env.REDIS_PORT || 6379;
+    this.client = createClient({ 
+      socket: {
+        host,
+        port
+      }
+    });
     this.connected = false;
 
     this.client.on('error', (err) => {
