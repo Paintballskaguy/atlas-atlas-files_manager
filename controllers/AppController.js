@@ -1,6 +1,7 @@
 import redisClient from '../utils/redis.js';
 import dbClient from '../utils/db.js';
 
+
 class AppController {
   static getStatus(req, res) {
     return res.status(200).json({

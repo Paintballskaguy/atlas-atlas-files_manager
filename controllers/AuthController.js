@@ -2,6 +2,8 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import dbClient from '../utils/db.js';
 import redisClient from '../utils/redis.js';
+import pkg from 'mongodb';
+const { ObjectId } = pkg;
 
 function sha1(value) {
   return crypto.createHash('sha1').update(value).digest('hex');

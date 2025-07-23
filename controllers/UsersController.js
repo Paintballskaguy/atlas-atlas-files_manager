@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import dbClient from '../utils/db.js';
 import redisClient from '../utils/redis.js';
+import pkg from 'mongodb';
+const { ObjectId } = pkg;
 
 class UsersController {
   static async postNew(req, res) {
